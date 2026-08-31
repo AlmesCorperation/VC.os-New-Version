@@ -1,0 +1,15 @@
+{
+  "archive_format": "iso9660",
+  "output_filename": "my_disk_image.iso",
+  "entries": [
+    {
+      "pathname": "hello_world.txt",
+      "size": 12,
+      "content": "Hello World!",
+      "permissions": "0644",
+      "type": "AE_IFREG"
+    }
+  ],
+  "system_id": "VCOS_1.1.0",
+  "volume_id": "VCOS_BOOT_DISK"
+}

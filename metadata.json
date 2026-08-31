@@ -1,0 +1,8 @@
+{
+  "name": "VC.os",
+  "description": "Vibe Code Operating System. A bare-metal x86 virtual machine OS environment and retro desktop interface. Created by Keo Doolish.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,16 @@
+{
+  "name": "VC.os",
+  "short_name": "VC.os",
+  "description": "A web-based 16-bit operating system environment.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#008080",
+  "theme_color": "#c0c0c0",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

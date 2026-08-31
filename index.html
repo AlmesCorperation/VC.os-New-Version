@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VC.os</title>
+    <meta name="description" content="Vibe Code Operating System. A bare-metal x86 virtual machine OS environment and retro desktop interface. Created by Keo Doolish." />
+    <meta property="og:title" content="VC.os" />
+    <meta property="og:description" content="Vibe Code Operating System. A bare-metal x86 virtual machine OS environment and retro desktop interface. Created by Keo Doolish." />
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#c0c0c0" />
+  </head>
+  <body>
+    <script>
+      window.addEventListener('error', function(e) {
+        var root = document.getElementById('root');
+        if (root) {
+          root.innerHTML = '<div style="padding: 20px; background: #800000; color: white; font-family: monospace; font-size: 14px; border: 4px double white; margin: 20px; text-align: left;">' +
+            '<h2 style="margin-top: 0; color: #ff3333; font-family: sans-serif;">⚠️ SYSTEM BOOT FAILURE</h2>' +
+            '<p><strong>Message:</strong> ' + e.message + '</p>' +
+            '<p><strong>File:</strong> ' + e.filename + ':' + e.lineno + ':' + e.colno + '</p>' +
+            '<p><strong>Stack:</strong> <pre style="white-space: pre-wrap; margin-top: 10px; background: #400000; padding: 10px; border: 1px solid #ff3333; max-height: 300px; overflow: auto; color: #ffbaba;">' + (e.error ? e.error.stack : 'No stack trace available') + '</pre></p>' +
+            '<div style="margin-top: 15px;"><button onclick="location.reload(true)" style="padding: 8px 16px; background: #fff; color: #000; border: 2px solid #000; font-weight: bold; cursor: pointer; font-family: monospace;">REBOOT SYSTEM</button></div>' +
+            '</div>';
+        }
+      });
+      window.addEventListener('unhandledrejection', function(e) {
+        var root = document.getElementById('root');
+        if (root) {
+          root.innerHTML = '<div style="padding: 20px; background: #800000; color: white; font-family: monospace; font-size: 14px; border: 4px double white; margin: 20px; text-align: left;">' +
+            '<h2 style="margin-top: 0; color: #ff3333; font-family: sans-serif;">⚠️ UNHANDLED ASYNC EXCEPTION</h2>' +
+            '<p><strong>Reason:</strong> ' + (e.reason && e.reason.message ? e.reason.message : String(e.reason)) + '</p>' +
+            '<p><strong>Stack:</strong> <pre style="white-space: pre-wrap; margin-top: 10px; background: #400000; padding: 10px; border: 1px solid #ff3333; max-height: 300px; overflow: auto; color: #ffbaba;">' + (e.reason && e.reason.stack ? e.reason.stack : 'No stack trace available') + '</pre></p>' +
+            '<div style="margin-top: 15px;"><button onclick="location.reload(true)" style="padding: 8px 16px; background: #fff; color: #000; border: 2px solid #000; font-weight: bold; cursor: pointer; font-family: monospace;">REBOOT SYSTEM</button></div>' +
+            '</div>';
+        }
+      });
+    </script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

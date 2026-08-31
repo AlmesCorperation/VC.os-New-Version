@@ -1,0 +1,96 @@
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap');
+@import "tailwindcss";
+
+:root {
+  --bit-bg: #2d2d2d;
+  --bit-fg: #ffffff;
+  --bit-accent: #3b82f6;
+  --bit-border: #ffffff;
+}
+
+@theme {
+  --font-sans: "Press Start 2P", system-ui, sans-serif;
+  --font-mono: "VT323", monospace;
+}
+
+* {
+  image-rendering: pixelated;
+  -webkit-font-smoothing: none;
+  -moz-osx-font-smoothing: grayscale;
+  box-sizing: border-box;
+}
+
+body {
+  background-color: #000;
+  color: var(--bit-fg);
+  font-family: var(--font-sans);
+  font-size: 10px; /* Base size for 8-bit font */
+  line-height: 1.5;
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Crect x='0' y='0' width='6' height='6' fill='white' stroke='black' stroke-width='1'/%3E%3C/svg%3E"), auto;
+}
+
+/* 8-Bit Flat Borders */
+.border-outset {
+  border: 4px solid var(--bit-border);
+  box-shadow: 4px 4px 0px #000000;
+}
+
+.border-inset {
+  border: 4px solid var(--bit-border);
+  background-color: #000000;
+}
+
+.border-button-active {
+  border: 4px solid var(--bit-border);
+  transform: translate(2px, 2px);
+  box-shadow: 2px 2px 0px #000000;
+}
+
+/* Custom Scrollbar - Blocky 8-Bit */
+::-webkit-scrollbar {
+  width: 20px;
+  height: 20px;
+}
+
+::-webkit-scrollbar-track {
+  background: #000000;
+  border-left: 2px solid #ffffff;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #ffffff;
+  border: 2px solid #000000;
+  box-shadow: inset 2px 2px 0px #aaaaaa;
+}
+
+::-webkit-scrollbar-button {
+  background: #ffffff;
+  width: 20px;
+  height: 20px;
+  border: 2px solid #000000;
+}
+
+/* Scanline Overlay */
+body::after {
+  content: " ";
+  display: block;
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  right: 0;
+  background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+  z-index: 9999;
+  background-size: 100% 4px, 3px 100%;
+  pointer-events: none;
+}
+
+@keyframes scan {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(1000%); }
+}
+
+@keyframes loading {
+  0% { width: 0%; }
+  100% { width: 100%; }
+}
