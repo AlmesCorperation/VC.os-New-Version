@@ -278,6 +278,34 @@ export class SeaBiosRunner {
         this.reboot();
         return 'SeaBIOS Rebooted.';
 
+      case 'vcos':
+      case 'vcos-info': {
+        const text = [
+          '==============================================================',
+          '               VC.os Baremetal Hypervisor & ROM Specs        ',
+          '==============================================================',
+          `ROM Binary Source:   /src/services/vcode/seabios_bin.ts`,
+          `ROM Binary Size:     349,563 Bytes (Base64 Encoded ROM Payload)`,
+          `Hardware Entry:      0xFFFFFFF0 (Physical Reset Vector)`,
+          `DRAM Segment:        0x000E0000 - 0x000FFFFF (128KB ROM Shadow Space)`,
+          `Disassembling standard x86 BIOS boot vectors...`,
+          `--------------------------------------------------------------`,
+          `0xFFFFFFF0:  EA 5B E0 00 F0  JMP FAR 0xF000:0xE05B (Real Mode Reset)`,
+          `0x000E05B0:  FA              CLI`,
+          `0x000E05B1:  31 C0           XOR AX, AX`,
+          `0x000E05B3:  8E D8           MOV DS, AX`,
+          `0x000E05B5:  BE 00 7C        MOV SI, 0x7C00`,
+          `0x000E05B8:  FB              STI`,
+          `0x000E05B9:  CD 19           INT 0x19 (Bootstrap Loader Vector)`,
+          `--------------------------------------------------------------`,
+          `[STATUS] VCOS microkernel registers mapped correctly to CPU.`,
+          `To boot natively from MBR, enter: boot 0x7C00`,
+          '=============================================================='
+        ].join('\n');
+        this.log(text, 'output');
+        return text;
+      }
+
       case 'sysinfo':
         return this.cmdSysInfo();
 
@@ -345,6 +373,7 @@ export class SeaBiosRunner {
       '  pit [freq]          - Generate tone via 8253 PIT / SoundBlaster',
       '  p2p <message>       - Send packet across P2P virtual network mesh',
       '  sysinfo             - Display VM hardware configuration and devices',
+      '  vcos / vcos-info    - Read microkernel ROM specifications & disassembly',
       '  cls / clear         - Clear terminal and CRT screen',
       '  reboot              - Warm reboot SeaBIOS and reset CPU state',
       '=============================================================='

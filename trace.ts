@@ -20,7 +20,7 @@ try {
   while (steps < 20) {
     const pc = mb.cpu.registers.eip;
     const op = mb.readMem8(pc);
-    console.log(\`Step \${steps}: EIP=0x\${pc.toString(16)} Opcode=0x\${op.toString(16)}\`);
+    console.log(`Step ${steps}: EIP=0x${pc.toString(16)} Opcode=0x${op.toString(16)}`);
     mb.cpu.step();
     steps++;
   }

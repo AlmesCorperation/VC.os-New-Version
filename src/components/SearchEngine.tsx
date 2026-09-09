@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Search, Globe, ArrowLeft, ArrowRight, RotateCw, ExternalLink, Shield, WifiOff, Database, Terminal, Plus, Trash2, History, BookOpen, AlertCircle, Check, FileText } from 'lucide-react';
+import { Search, Globe, ArrowLeft, ArrowRight, RotateCw, ExternalLink, Shield, WifiOff, Database, Trash2, BookOpen, AlertCircle, Home, Lock, RefreshCw, Layers } from 'lucide-react';
 import { kernel } from '../services/kernel';
 import { useSettings } from '../hooks/useSettings';
 
@@ -7,9 +7,9 @@ interface IndexedPage {
   url: string;
   title: string;
   snippet: string;
-  content: string; // full body text for matching
-  paragraphs: string[]; // structured text lines
-  links: { href: string; text: string }[]; // extracted outlinks
+  content: string;
+  paragraphs: string[];
+  links: { href: string; text: string }[];
   indexedAt: number;
 }
 
@@ -20,7 +20,15 @@ interface SearchResult {
   score: number;
 }
 
-// Default high-quality seeded pages for the bare-metal engine
+interface DdgInstantAnswer {
+  heading: string;
+  abstractText: string;
+  abstractSource: string;
+  abstractURL: string;
+  image: string;
+}
+
+// Default pre-seeded system pages for VC.explorer
 const DEFAULT_PAGES: IndexedPage[] = [
   {
     url: "vcos://welcome",
@@ -106,69 +114,44 @@ const DEFAULT_PAGES: IndexedPage[] = [
       { href: "https://github.com", text: "Explore GitHub Projects" }
     ],
     indexedAt: Date.now()
-  },
-  {
-    url: "https://github.com",
-    title: "GitHub: Let's build from here",
-    snippet: "The world's leading AI-powered developer platform where millions of developers build, run, and secure code.",
-    content: "GitHub is where developers store their source code, collaborate on open-source software, manage software releases, and use automated build pipelines (GitHub Actions). It supports git-based version control for millions of active repositories including OS kernels, frontend frameworks, and retro compilers.",
-    paragraphs: [
-      "GitHub is where developers store their source code, collaborate on open-source software, manage software releases, and use automated build pipelines (GitHub Actions).",
-      "It supports git-based version control for millions of active repositories including OS kernels, frontend frameworks, and retro compilers."
-    ],
-    links: [
-      { href: "https://news.ycombinator.com", text: "Hacker News Discussions" }
-    ],
-    indexedAt: Date.now()
-  },
-  {
-    url: "https://reddit.com/r/osdev",
-    title: "Operating System Development on Reddit",
-    snippet: "The main subreddit for OS development. Share your hobby operating systems, ask questions about bootloaders, paging, and kernel structures.",
-    content: "Welcome to r/osdev! A place for developers of custom operating systems. Learn about writing boot sectors in assembly, setting up paging in protected mode, building FAT12/FAT32 filesystems, implementing task switching, and debugging kernels using QEMU, VMware, or Bochs.",
-    paragraphs: [
-      "Welcome to r/osdev! A place for developers of custom operating systems.",
-      "Learn about writing boot sectors in assembly, setting up paging in protected mode, building FAT12/FAT32 filesystems, implementing task switching, and debugging kernels using QEMU, VMware, or Bochs."
-    ],
-    links: [
-      { href: "vcos://kernel", text: "VC.os Hybrid Kernel Specifications" },
-      { href: "https://en.wikipedia.org/wiki/Operating_system", text: "Wikipedia: Operating System" }
-    ],
-    indexedAt: Date.now()
   }
 ];
 
 export const SearchEngine: React.FC = () => {
   const { isWifiConnected } = useSettings();
-  const [query, setQuery] = useState('');
+  const [activeTab, setActiveTab] = useState<'explorer' | 'crawler'>('explorer');
+  
+  // Search & Navigation States
+  const [queryInput, setQueryInput] = useState('');
+  const [activeUrl, setActiveUrl] = useState<string | null>(null);
   const [results, setResults] = useState<SearchResult[]>([]);
+  const [instantAnswer, setInstantAnswer] = useState<DdgInstantAnswer | null>(null);
+  const [readerPage, setReaderPage] = useState<IndexedPage | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [history, setHistory] = useState<string[]>([]);
-  const [activeUrl, setActiveUrl] = useState<string | null>(null);
-  
-  // Navigation stack for back operations in our custom Reader mode
-  const [navStack, setNavStack] = useState<string[]>([]);
-  const [navForwardStack, setNavForwardStack] = useState<string[]>([]);
-  
-  // Built-in Reader page content state
-  const [readerPage, setReaderPage] = useState<IndexedPage | null>(null);
 
-  // Bare-metal crawler/indexing states
+  // History stacks for navigation
+  const [historyStack, setHistoryStack] = useState<string[]>([]);
+  const [forwardStack, setForwardStack] = useState<string[]>([]);
+
+  // Autocomplete Suggestions
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const suggestionRef = useRef<HTMLDivElement>(null);
+
+  // Crawler and Index Database States
   const [dbPages, setDbPages] = useState<IndexedPage[]>([]);
-  const [currentTab, setCurrentTab] = useState<'search' | 'crawler'>('search');
   const [crawlUrl, setCrawlUrl] = useState('');
   const [isCrawling, setIsCrawling] = useState(false);
   const [crawlLogs, setCrawlLogs] = useState<string[]>([]);
-  const scrollRef = useRef<HTMLDivElement>(null);
   const logTerminalEndRef = useRef<HTMLDivElement>(null);
 
-  // Initialize from LocalStorage or seed defaults
+  // Initialize and load databases
   useEffect(() => {
-    const saved = localStorage.getItem('vcos_search_index');
-    if (saved) {
+    const savedIndex = localStorage.getItem('vcos_search_index');
+    if (savedIndex) {
       try {
-        setDbPages(JSON.parse(saved));
+        setDbPages(JSON.parse(savedIndex));
       } catch (e) {
         setDbPages(DEFAULT_PAGES);
       }
@@ -178,45 +161,76 @@ export const SearchEngine: React.FC = () => {
     }
   }, []);
 
-  // Auto scroll logs
-  useEffect(() => {
-    if (logTerminalEndRef.current) {
-      logTerminalEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [crawlLogs]);
-
   const saveIndexToStorage = (updated: IndexedPage[]) => {
     setDbPages(updated);
     localStorage.setItem('vcos_search_index', JSON.stringify(updated));
   };
 
-  const handleSearch = async (e?: React.FormEvent, customQuery?: string) => {
+  // Live Suggestion autocomplete handler
+  useEffect(() => {
+    if (!isWifiConnected) return;
+    const term = queryInput.trim();
+    if (term.length < 2 || term.startsWith('http') || term.startsWith('vcos://')) {
+      setSuggestions([]);
+      return;
+    }
+
+    const delayDebounceFn = setTimeout(async () => {
+      try {
+        const response = await fetch(`/api/search/suggest?q=${encodeURIComponent(term)}`);
+        if (response.ok) {
+          const list = await response.json();
+          setSuggestions(list.slice(0, 5));
+        }
+      } catch (e) {
+        console.error("Autocomplete suggest fail", e);
+      }
+    }, 200);
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [queryInput, isWifiConnected]);
+
+  // Click outside listener for suggestions
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (suggestionRef.current && !suggestionRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    window.addEventListener('mousedown', handleOutsideClick);
+    return () => window.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
+
+  // Primary search execution router
+  const triggerSearch = async (e?: React.FormEvent, customTerm?: string) => {
     if (e) e.preventDefault();
-    const activeQuery = (customQuery !== undefined ? customQuery : query).trim();
-    if (!activeQuery) return;
+    setShowSuggestions(false);
+
+    const term = (customTerm !== undefined ? customTerm : queryInput).trim();
+    if (!term) return;
 
     if (!isWifiConnected) {
-      setError("No connection to the Internet. Please check your Wifi Manager.");
+      setError("No network interface connected. Check WiFi configuration.");
       return;
     }
 
-    setError(null);
+    // Check if it's a direct URL address
+    if (term.startsWith('http://') || term.startsWith('https://') || term.startsWith('vcos://')) {
+      loadWebAddress(term);
+      return;
+    }
+
     setLoading(true);
-    setReaderPage(null);
-    setActiveUrl(null);
+    setError(null);
+    setQueryInput(term);
 
-    // Direct URL entry or vcos custom link check
-    if (activeQuery.startsWith('http://') || activeQuery.startsWith('https://') || activeQuery.startsWith('vcos://')) {
-      openUrlInReader(activeQuery);
-      return;
-    }
-
-    kernel.emitEvent('TASK', `BARE_METAL_SEARCH: "${activeQuery}"`);
+    kernel.emitEvent('TASK', `VC_EXPLORER_SEARCH: "${term}"`);
     kernel.executeTask('BROWSER_REQ', 4);
 
     try {
-      const searchTerms = activeQuery.toLowerCase().split(/[\s,.-]+/).filter(t => t.length > 1);
-      const scoredLocal: SearchResult[] = [];
+      // 1. Match local index pages
+      const searchTerms = term.toLowerCase().split(/[\s,.-]+/).filter(t => t.length > 1);
+      const matchedLocal: SearchResult[] = [];
 
       if (searchTerms.length > 0) {
         dbPages.forEach(page => {
@@ -225,49 +239,62 @@ export const SearchEngine: React.FC = () => {
           const urlLower = page.url.toLowerCase();
           const contentLower = page.content.toLowerCase();
 
-          searchTerms.forEach(term => {
-            const titleCount = (titleLower.match(new RegExp(`\\b${term}\\b`, 'g')) || []).length;
-            const urlCount = (urlLower.match(new RegExp(term, 'g')) || []).length;
-            const contentCount = (contentLower.match(new RegExp(term, 'g')) || []).length;
-            const titleSubMatch = titleCount === 0 && titleLower.includes(term) ? 1 : 0;
-            score += (titleCount * 25) + (titleSubMatch * 10) + (urlCount * 15) + (contentCount * 1);
+          searchTerms.forEach(token => {
+            const titleCount = (titleLower.match(new RegExp(`\\b${token}\\b`, 'g')) || []).length;
+            const urlCount = (urlLower.match(new RegExp(token, 'g')) || []).length;
+            const contentCount = (contentLower.match(new RegExp(token, 'g')) || []).length;
+            const titleSub = titleCount === 0 && titleLower.includes(token) ? 1 : 0;
+            score += (titleCount * 30) + (titleSub * 10) + (urlCount * 15) + (contentCount * 2);
           });
 
           if (score > 0) {
-            scoredLocal.push({
+            matchedLocal.push({
               title: page.title,
               link: page.url,
-              snippet: page.snippet || (page.content.slice(0, 150) + "..."),
-              score
+              snippet: page.snippet || (page.content.slice(0, 140) + "..."),
+              score: score + 100 // Boost local index matches
             });
           }
         });
       }
 
-      scoredLocal.sort((a, b) => b.score - a.score);
+      matchedLocal.sort((a, b) => b.score - a.score);
 
-      // Perform Real Web Search from server API
+      // 2. Query VC Search Backend (Proxied DuckDuckGo)
       let webResults: SearchResult[] = [];
+      let instantAnswerObj: DdgInstantAnswer | null = null;
+
       try {
-        const response = await fetch(`/api/search?q=${encodeURIComponent(activeQuery)}`);
+        const response = await fetch(`/api/search?q=${encodeURIComponent(term)}`);
         if (response.ok) {
           const data = await response.json();
-          if (data && data.items) {
-            webResults = data.items.map((item: any, idx: number) => ({
-              title: item.title,
-              link: item.link,
-              snippet: item.snippet,
-              score: Math.max(10, 80 - idx * 5)
-            }));
+          if (data) {
+            if (data.abstractText) {
+              instantAnswerObj = {
+                heading: data.heading || term,
+                abstractText: data.abstractText,
+                abstractSource: data.abstractSource || "VC System Index",
+                abstractURL: data.abstractURL || "",
+                image: data.image || ""
+              };
+            }
+            if (data.items) {
+              webResults = data.items.map((item: any, index: number) => ({
+                title: item.title,
+                link: item.link,
+                snippet: item.snippet,
+                score: Math.max(10, 90 - index * 5)
+              }));
+            }
           }
         }
       } catch (err) {
-        console.error("Web search API fetch failed:", err);
+        console.error("Internal index search fail:", err);
       }
 
-      // Merge and remove duplicates by URL
-      const mergedResults: SearchResult[] = [...scoredLocal];
-      const seenUrls = new Set<string>(scoredLocal.map(r => r.link.toLowerCase()));
+      // 3. Deduplicate and merge results
+      const mergedResults: SearchResult[] = [...matchedLocal];
+      const seenUrls = new Set<string>(matchedLocal.map(r => r.link.toLowerCase()));
 
       webResults.forEach(r => {
         const urlKey = r.link.toLowerCase();
@@ -279,430 +306,469 @@ export const SearchEngine: React.FC = () => {
 
       mergedResults.sort((a, b) => b.score - a.score);
 
+      // Save States
       setResults(mergedResults);
-      setHistory(prev => {
-        const next = [activeQuery, ...prev.filter(q => q !== activeQuery)];
-        return next.slice(0, 10);
-      });
+      setInstantAnswer(instantAnswerObj);
+      setReaderPage(null);
+      setActiveUrl(null);
+      setLoading(false);
+
     } catch (err: any) {
-      setError(err.message || "Failed to search index registry.");
-    } finally {
+      setError(err.message || "Failed to retrieve index nodes.");
       setLoading(false);
     }
   };
 
-  const openUrlInReader = async (url: string) => {
-    let formattedUrl = url.trim();
-    if (!formattedUrl.startsWith('http://') && !formattedUrl.startsWith('https://') && !formattedUrl.startsWith('vcos://')) {
-      formattedUrl = 'https://' + formattedUrl;
+  // Direct Address Loader
+  const loadWebAddress = async (targetUrl: string) => {
+    let formatted = targetUrl.trim();
+    if (!formatted.startsWith('http://') && !formatted.startsWith('https://') && !formatted.startsWith('vcos://')) {
+      formatted = 'https://' + formatted;
     }
 
     if (!isWifiConnected) {
-      setError("No connection to the Internet. Please check your Wifi Manager.");
+      setError("WiFi Network disconnected. Handshake terminated.");
       return;
     }
 
-    setError(null);
     setLoading(true);
-    kernel.emitEvent('TASK', `CRAWLER_GET_READER: ${formattedUrl}`);
+    setError(null);
+    setQueryInput(formatted);
+
+    kernel.emitEvent('TASK', `VC_EXPLORER_GET_PAGE: ${formatted}`);
 
     try {
-      // Check if page is already in our local index DB
-      const existingPage = dbPages.find(p => p.url.toLowerCase() === formattedUrl.toLowerCase());
-      if (existingPage) {
-        if (activeUrl) {
-          setNavStack(prev => [...prev, activeUrl]);
-        }
-        setNavForwardStack([]);
-        setActiveUrl(formattedUrl);
-        setQuery(formattedUrl);
-        setReaderPage(existingPage);
+      // Check local cache
+      const localMatch = dbPages.find(p => p.url.toLowerCase() === formatted.toLowerCase());
+      if (localMatch) {
+        const nextStack = activeUrl ? [...historyStack, activeUrl] : historyStack;
+        setHistoryStack(nextStack);
+        setForwardStack([]);
+        setActiveUrl(formatted);
+        setReaderPage(localMatch);
         setLoading(false);
         return;
       }
 
-      // If page is not indexed yet, we crawl it dynamically on-the-fly!
-      const crawled = await runLiveCrawl(formattedUrl, false);
-      if (activeUrl) {
-        setNavStack(prev => [...prev, activeUrl]);
-      }
-      setNavForwardStack([]);
-      setActiveUrl(formattedUrl);
-      setQuery(formattedUrl);
-      setReaderPage(crawled);
+      // Fetch dynamic crawler proxies
+      const pageResult = await crawlSinglePage(formatted, false);
 
-      // Automatically add this to our bare-metal index so it becomes searchable!
-      const exists = dbPages.some(p => p.url.toLowerCase() === crawled.url.toLowerCase());
+      const nextStack = activeUrl ? [...historyStack, activeUrl] : historyStack;
+      setHistoryStack(nextStack);
+      setForwardStack([]);
+      setActiveUrl(formatted);
+      setReaderPage(pageResult);
+      setLoading(false);
+
+      // Auto save newly crawled page to system database
+      const exists = dbPages.some(p => p.url.toLowerCase() === pageResult.url.toLowerCase());
       if (!exists) {
-        const updated = [crawled, ...dbPages];
+        const updated = [pageResult, ...dbPages];
         saveIndexToStorage(updated);
       }
+
     } catch (err: any) {
-      setError(`Unable to parse webpage structure. Please verify the URL or try another domain. Error: ${err.message}`);
-    } finally {
+      setError(`Handshake timed out or rejected: ${err.message || 'Host offline'}`);
       setLoading(false);
     }
   };
 
-  // The bare-metal webpage crawler engine (fetches HTML, strips scripts/tags, extracts text & titles)
-  const runLiveCrawl = async (urlToCrawl: string, verboseLogging: boolean = false): Promise<IndexedPage> => {
+  // Internal Crawler Core scraper logic
+  const crawlSinglePage = async (url: string, verboseLogging: boolean): Promise<IndexedPage> => {
     const log = (msg: string) => {
       if (verboseLogging) {
         setCrawlLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
       }
     };
 
-    let targetUrl = urlToCrawl.trim();
-    if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://') && !targetUrl.startsWith('vcos://')) {
-      targetUrl = 'https://' + targetUrl;
+    let target = url.trim();
+    if (!target.startsWith('http://') && !target.startsWith('https://') && !target.startsWith('vcos://')) {
+      target = 'https://' + target;
     }
 
-    // Handlers for simulated vcos system resources
-    if (targetUrl.startsWith('vcos://')) {
-      log(`Resolving local VC.os Virtual File Address...`);
-      const defaultMatch = DEFAULT_PAGES.find(p => p.url === targetUrl);
-      if (defaultMatch) {
-        log(`System mapping discovered: "${defaultMatch.title}"`);
-        log(`Page indexing finished successfully.`);
-        return { ...defaultMatch };
+    // Resolving system protocol pages
+    if (target.startsWith('vcos://')) {
+      log(`Resolving local VC.os system reference...`);
+      const systemMatch = DEFAULT_PAGES.find(p => p.url === target);
+      if (systemMatch) {
+        log(`Mapping found for: ${systemMatch.title}`);
+        return { ...systemMatch };
       }
       return {
-        url: targetUrl,
-        title: `VC.os System Link: ${targetUrl.replace('vcos://', '')}`,
-        snippet: `A custom system page on the VC.os Virtual Network.`,
-        content: `Mapped system path resolved. Welcome to ${targetUrl}. Operational indices report healthy network operations.`,
-        paragraphs: [
-          `Mapped system path resolved. Welcome to ${targetUrl}.`,
-          `Operational indices report healthy network operations. No threats detected.`
-        ],
-        links: [{ href: 'vcos://welcome', text: 'Return to Welcome Portal' }],
+        url: target,
+        title: `VC.os System Node: ${target.replace('vcos://', '')}`,
+        snippet: `Custom offline system interface compiled inside memory tables.`,
+        content: `System path loaded securely. Diagnostic parameters report operational.`,
+        paragraphs: [`System path loaded securely. Diagnostic parameters report operational.`],
+        links: [{ href: 'vcos://welcome', text: 'Return to welcome page' }],
         indexedAt: Date.now()
       };
     }
 
-    log(`Initiating HTTP handshake over VC_PROXY tunnel...`);
-    log(`Connecting to remote host: ${new URL(targetUrl).hostname}`);
-    
-    const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
+    log(`Initializing secure TLS socket tunnel...`);
+    const proxyUrl = `/api/proxy?url=${encodeURIComponent(target)}`;
     const response = await fetch(proxyUrl);
     if (!response.ok) {
-      throw new Error(`Connection timed out or host rejected. Status: ${response.status}`);
+      throw new Error(`Remote node rejected connection. Status Code: ${response.status}`);
     }
 
-    log(`Handshake accepted. Downloading HTML document byte blocks...`);
+    log(`Connected. Scraped payload acquired.`);
     const html = await response.text();
-    log(`Download complete. Loaded ${Math.ceil(html.length / 1024)} KB payload.`);
-    log(`Parsing HTML Document Object Model...`);
+    log(`Document size: ${Math.ceil(html.length / 1024)} KB. Filtering nodes...`);
 
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, 'text/html');
 
-    // Title Extraction
-    let title = doc.title || targetUrl;
+    let title = doc.title || target;
     title = title.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
-    log(`Parsed document title: "${title}"`);
+    log(`Resolved document title: "${title}"`);
 
-    // Clean scripts, styles, layouts
-    log(`Executing bare-metal script sanitization and layout stripping...`);
-    doc.querySelectorAll('script, style, iframe, noscript, svg, header, footer, nav, link, meta, form, button').forEach(el => el.remove());
+    doc.querySelectorAll('script, style, iframe, svg, header, footer, nav, noscript').forEach(el => el.remove());
 
-    // Extract text blocks
     const paragraphs: string[] = [];
-    doc.querySelectorAll('p, h1, h2, h3, h4, h5, li').forEach(el => {
+    doc.querySelectorAll('p, li, h1, h2, h3').forEach(el => {
       const text = el.textContent?.trim();
-      if (text && text.length > 25 && paragraphs.length < 15) {
+      if (text && text.length > 30 && paragraphs.length < 15) {
         paragraphs.push(text);
       }
     });
 
     if (paragraphs.length === 0) {
-      const textContent = doc.body?.textContent || "";
-      const splitLines = textContent.split('\n')
-        .map(l => l.trim())
-        .filter(l => l.length > 40);
-      paragraphs.push(...splitLines.slice(0, 10));
+      const text = doc.body?.textContent || "";
+      const split = text.split('\n').map(l => l.trim()).filter(l => l.length > 50);
+      paragraphs.push(...split.slice(0, 10));
     }
 
-    const fullContent = paragraphs.join(' ');
-    log(`Scraped ${paragraphs.length} paragraphs. Compiling token index...`);
+    log(`Registered text content blocks: ${paragraphs.length} strings extracted.`);
 
-    // Extract Outlinks
-    log(`Mapping hypertext outgoing anchor references...`);
     const links: { href: string; text: string }[] = [];
-    doc.querySelectorAll('a').forEach(a => {
-      const href = a.getAttribute('href');
-      const text = a.textContent?.trim();
-      if (href && text && text.length > 2 && links.length < 25) {
+    doc.querySelectorAll('a').forEach(anchor => {
+      const href = anchor.getAttribute('href');
+      const text = anchor.textContent?.trim();
+      if (href && text && text.length > 2 && links.length < 15) {
         let resolved = href;
         if (href.startsWith('/')) {
           try {
-            const u = new URL(targetUrl);
+            const u = new URL(target);
             resolved = `${u.protocol}//${u.host}${href}`;
           } catch (e) {}
-        } else if (!href.startsWith('http://') && !href.startsWith('https://') && !href.startsWith('vcos://') && !href.startsWith('javascript:')) {
-          try {
-            const u = new URL(targetUrl);
-            resolved = `${u.protocol}//${u.host}/${href}`;
-          } catch (e) {}
         }
-
         if (resolved.startsWith('http') || resolved.startsWith('vcos://')) {
-          links.push({ href: resolved, text: text.slice(0, 60) });
+          links.push({ href: resolved, text: text.slice(0, 50) });
         }
       }
     });
 
-    log(`Discovered ${links.length} qualifying anchor links.`);
-    log(`Indexing page contents into persistent local engine database...`);
+    log(`Discovered reference outbound links: ${links.length} URLs.`);
 
     return {
-      url: targetUrl,
+      url: target,
       title,
-      snippet: paragraphs[0]?.slice(0, 160) + (paragraphs[0]?.length > 160 ? "..." : "") || "Extracted bare-metal webpage view.",
-      content: fullContent,
+      snippet: paragraphs[0]?.slice(0, 150) + "..." || "Parsed text database block.",
+      content: paragraphs.join(' '),
       paragraphs,
       links,
       indexedAt: Date.now()
     };
   };
 
+  // Manual trigger from Crawler tab
   const handleManualCrawl = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!crawlUrl.trim() || isCrawling) return;
 
     if (!isWifiConnected) {
-      setCrawlLogs(prev => [...prev, `[ERROR] No network connection. Cannot initialize crawl.`]);
+      setCrawlLogs(prev => [...prev, `[ERROR] Scraper aborted: Network interface is DOWN.`]);
       return;
     }
 
     setIsCrawling(true);
     setCrawlLogs([]);
-    kernel.emitEvent('TASK', `CRAWLER_MANUAL_INIT: ${crawlUrl}`);
 
     try {
-      const crawled = await runLiveCrawl(crawlUrl, true);
-      
-      const filtered = dbPages.filter(p => p.url.toLowerCase() !== crawled.url.toLowerCase());
-      const updated = [crawled, ...filtered];
+      const result = await crawlSinglePage(crawlUrl, true);
+      const filtered = dbPages.filter(p => p.url.toLowerCase() !== result.url.toLowerCase());
+      const updated = [result, ...filtered];
       saveIndexToStorage(updated);
-      
-      setCrawlLogs(prev => [...prev, `\n[SUCCESS] Crawled and indexed "${crawled.title}" successfully!`]);
-      setCrawlLogs(prev => [...prev, `[STATS] URL: ${crawled.url}`]);
-      setCrawlLogs(prev => [...prev, `[STATS] Total database index size is now ${updated.length} pages.`]);
+
+      setCrawlLogs(prev => [
+        ...prev,
+        `\n[SUCCESS] Document parsed and saved to local search index table!`,
+        `[METRICS] Page Title: ${result.title}`,
+        `[METRICS] Local database contains ${updated.length} indexed records.`
+      ]);
       setCrawlUrl('');
     } catch (err: any) {
-      setCrawlLogs(prev => [...prev, `\n[CRAWL FAIL] ${err.message || 'Host is unreachable or blocks crawlers.'}`]);
+      setCrawlLogs(prev => [...prev, `\n[CRAWL FAULT] ${err.message || 'Scraper encountered a firewall or timeout.'}`]);
     } finally {
       setIsCrawling(false);
     }
   };
 
-  const goBack = () => {
-    if (navStack.length > 0) {
-      const previous = navStack[navStack.length - 1];
-      setNavForwardStack(prev => [...prev, activeUrl || '']);
-      setNavStack(prev => prev.slice(0, -1));
-      setActiveUrl(previous);
-      setQuery(previous);
+  // Classic navigation controls
+  const handleBack = () => {
+    if (historyStack.length > 0) {
+      const previous = historyStack[historyStack.length - 1];
+      const nextForward = activeUrl || queryInput;
       
-      const p = dbPages.find(page => page.url.toLowerCase() === previous.toLowerCase());
-      if (p) setReaderPage(p);
+      const localMatch = dbPages.find(p => p.url.toLowerCase() === previous.toLowerCase());
+
+      setForwardStack(prev => [...prev, nextForward]);
+      setHistoryStack(prev => prev.slice(0, -1));
+      setActiveUrl(previous);
+      setQueryInput(previous);
+      setReaderPage(localMatch || null);
+
+      if (!localMatch && previous.startsWith('http')) {
+        loadWebAddress(previous);
+      }
     } else {
+      // Clear all reader state and go back to results
       setActiveUrl(null);
       setReaderPage(null);
     }
   };
 
-  const goForward = () => {
-    if (navForwardStack.length > 0) {
-      const next = navForwardStack[navForwardStack.length - 1];
-      setNavStack(prev => [...prev, activeUrl || '']);
-      setNavForwardStack(prev => prev.slice(0, -1));
+  const handleForward = () => {
+    if (forwardStack.length > 0) {
+      const next = forwardStack[forwardStack.length - 1];
+      const nextStack = activeUrl ? [...historyStack, activeUrl] : historyStack;
+
+      const localMatch = dbPages.find(p => p.url.toLowerCase() === next.toLowerCase());
+
+      setHistoryStack(nextStack);
+      setForwardStack(prev => prev.slice(0, -1));
       setActiveUrl(next);
-      setQuery(next);
-      
-      const p = dbPages.find(page => page.url.toLowerCase() === next.toLowerCase());
-      if (p) setReaderPage(p);
+      setQueryInput(next);
+      setReaderPage(localMatch || null);
+
+      if (!localMatch && next.startsWith('http')) {
+        loadWebAddress(next);
+      }
     }
   };
 
-  const deleteFromIndex = (url: string) => {
+  const handleHome = () => {
+    setActiveUrl(null);
+    setReaderPage(null);
+    setResults([]);
+    setInstantAnswer(null);
+    setQueryInput('');
+  };
+
+  const handleDeleteIndex = (url: string) => {
     const updated = dbPages.filter(p => p.url !== url);
     saveIndexToStorage(updated);
-    if (activeUrl === url) {
-      setActiveUrl(null);
-      setReaderPage(null);
-    }
   };
 
-  const resetIndexToDefaults = () => {
-    if (window.confirm("Are you sure you want to reset the search database to system defaults? Any custom crawled pages will be removed.")) {
-      saveIndexToStorage(DEFAULT_PAGES);
+  // Scroll crawler logs
+  useEffect(() => {
+    if (logTerminalEndRef.current) {
+      logTerminalEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  };
+  }, [crawlLogs]);
 
   return (
-    <div className="h-full flex flex-col font-sans text-[12px] bg-[#1a1a1a] text-green-400 select-none">
-      {/* Search Engine Header & Navigation Toolbar */}
-      <div className="p-2 border-b border-green-900/40 bg-[#141414] flex flex-col gap-2 shrink-0">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Database className="text-green-500" size={16} />
-            <span className="font-bold tracking-tight uppercase text-green-500 text-[11px]">VC Bare-Metal Search Engine v2.0</span>
-          </div>
-          <div className="flex border border-green-900/50 rounded overflow-hidden">
-            <button 
-              onClick={() => setCurrentTab('search')} 
-              className={`px-3 py-1 font-bold uppercase text-[9px] ${currentTab === 'search' ? 'bg-green-600 text-black' : 'bg-transparent text-green-400 hover:bg-green-900/10'}`}
-            >
-              Search Hub
-            </button>
-            <button 
-              onClick={() => setCurrentTab('crawler')} 
-              className={`px-3 py-1 font-bold uppercase text-[9px] ${currentTab === 'crawler' ? 'bg-green-600 text-black' : 'bg-transparent text-green-400 hover:bg-green-900/10'}`}
-            >
-              Crawler Core ({dbPages.length})
-            </button>
-          </div>
+    <div className="h-full flex flex-col font-mono text-[12px] bg-win95-gray text-black select-none">
+      
+      {/* 1. Classic Inset Navigation Header */}
+      <div className="p-1 border-b-2 border-white bg-win95-gray flex items-center justify-between shrink-0 select-none shadow-sm">
+        {/* Navigation Action Buttons (Win95 styling with gray colors) */}
+        <div className="flex items-center gap-1">
+          <button 
+            onClick={handleBack}
+            disabled={!activeUrl && historyStack.length === 0}
+            className="px-2 py-1 bg-win95-gray border-outset hover:bg-zinc-100 active:border-inset disabled:opacity-30 disabled:pointer-events-none rounded font-bold flex items-center gap-1 text-[11px]"
+            title="Go Back"
+          >
+            <ArrowLeft size={11} /> Back
+          </button>
+          <button 
+            onClick={handleForward}
+            disabled={forwardStack.length === 0}
+            className="px-2 py-1 bg-win95-gray border-outset hover:bg-zinc-100 active:border-inset disabled:opacity-30 disabled:pointer-events-none rounded font-bold flex items-center gap-1 text-[11px]"
+            title="Go Forward"
+          >
+            Forward <ArrowRight size={11} />
+          </button>
+          <button 
+            onClick={() => {
+              if (activeUrl) loadWebAddress(activeUrl);
+              else if (queryInput) triggerSearch();
+            }}
+            className="px-2 py-1 bg-win95-gray border-outset hover:bg-zinc-100 active:border-inset rounded font-bold flex items-center gap-1 text-[11px]"
+            title="Refresh"
+          >
+            <RefreshCw size={11} /> Refresh
+          </button>
+          <button 
+            onClick={handleHome}
+            className="px-2 py-1 bg-win95-gray border-outset hover:bg-zinc-100 active:border-inset rounded font-bold flex items-center gap-1 text-[11px]"
+            title="Home"
+          >
+            <Home size={11} /> Home
+          </button>
         </div>
 
-        {currentTab === 'search' && (
-          <div className="flex items-center gap-1.5">
-            <button 
-              className="p-1.5 border border-green-900/40 bg-black text-green-400 hover:bg-green-900/20 active:bg-green-900/40 disabled:opacity-30 disabled:hover:bg-black rounded" 
-              disabled={!activeUrl && navStack.length === 0}
-              onClick={goBack}
-              title="Back"
-            >
-              <ArrowLeft size={13} />
-            </button>
-            <button 
-              className="p-1.5 border border-green-900/40 bg-black text-green-400 hover:bg-green-900/20 active:bg-green-900/40 disabled:opacity-30 disabled:hover:bg-black rounded" 
-              disabled={navForwardStack.length === 0}
-              onClick={goForward}
-              title="Forward"
-            >
-              <ArrowRight size={13} />
-            </button>
-            <button 
-              className="p-1.5 border border-green-900/40 bg-black text-green-400 hover:bg-green-900/20 rounded" 
-              onClick={() => activeUrl ? openUrlInReader(activeUrl) : handleSearch()}
-              title="Refresh"
-            >
-              <RotateCw size={13} />
-            </button>
-
-            <div className="flex-1 flex items-center border border-green-900/50 bg-black px-2 py-1 gap-2 rounded">
-              <Globe size={13} className="text-green-500" />
-              <form onSubmit={(e) => { e.preventDefault(); handleSearch(); }} className="flex-1">
-                <input 
-                  type="text" 
-                  className="w-full outline-none bg-transparent text-green-400 font-mono text-[11px]"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Enter search phrase, URL, or vcos:// link..."
-                />
-              </form>
-            </div>
-
-            <button 
-              className="px-4 py-1 border border-green-900/50 bg-green-900/20 hover:bg-green-600 hover:text-black font-bold uppercase flex items-center gap-1 text-[10px] rounded"
-              onClick={() => handleSearch()}
-            >
-              <Search size={12} />
-              Query
-            </button>
-          </div>
-        )}
+        {/* Dynamic Navigation Tabs */}
+        <div className="flex border border-zinc-400 rounded overflow-hidden shadow-sm">
+          <button 
+            onClick={() => setActiveTab('explorer')}
+            className={`px-3 py-1 text-[10px] font-bold uppercase flex items-center gap-1.5 ${activeTab === 'explorer' ? 'bg-win95-blue text-white' : 'bg-zinc-300 text-black hover:bg-zinc-200'}`}
+          >
+            <Globe size={11} /> Explorer
+          </button>
+          <button 
+            onClick={() => setActiveTab('crawler')}
+            className={`px-3 py-1 text-[10px] font-bold uppercase flex items-center gap-1.5 ${activeTab === 'crawler' ? 'bg-win95-blue text-white' : 'bg-zinc-300 text-black hover:bg-zinc-200'}`}
+          >
+            <Database size={11} /> Crawler Core ({dbPages.length})
+          </button>
+        </div>
       </div>
 
-      {/* Main Content Pane */}
+      {/* 2. Main Address Bar Row */}
+      {activeTab === 'explorer' && (
+        <div className="p-1.5 bg-win95-gray border-b border-white flex items-center gap-1.5 shrink-0 shadow-xs">
+          <div className="flex items-center gap-1 text-green-700 font-bold text-[9px] bg-green-50 px-1.5 py-0.5 border border-green-200 rounded-sm select-none">
+            <Lock size={9} />
+            <span>SECURE</span>
+          </div>
+
+          {/* Core URL input with live suggest dropdown */}
+          <div className="flex-1 relative flex items-center bg-white border-inset px-2 py-1 min-h-[26px]">
+            <input 
+              type="text" 
+              className="w-full bg-transparent text-black outline-none font-mono text-[11px]"
+              value={queryInput}
+              onFocus={() => {
+                if (queryInput.trim().length >= 2) setShowSuggestions(true);
+              }}
+              onChange={(e) => {
+                setQueryInput(e.target.value);
+                setShowSuggestions(true);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  triggerSearch();
+                }
+              }}
+              placeholder="Enter search phrase or full URL..."
+            />
+
+            {/* Absolute Suggest Overlay */}
+            {showSuggestions && suggestions.length > 0 && (
+              <div 
+                ref={suggestionRef}
+                className="absolute left-0 right-0 top-[26px] bg-white border border-zinc-400 shadow-md z-50 rounded-b-sm select-none text-[11px]"
+              >
+                {suggestions.map((item, index) => (
+                  <div
+                    key={index}
+                    onClick={() => {
+                      setQueryInput(item);
+                      setShowSuggestions(false);
+                      triggerSearch(undefined, item);
+                    }}
+                    className="px-3 py-1.5 hover:bg-win95-blue hover:text-white cursor-pointer flex items-center gap-2 border-b border-zinc-100 last:border-b-0"
+                  >
+                    <Search size={10} className="text-zinc-400 shrink-0" />
+                    <span>{item}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <button 
+            onClick={() => triggerSearch()}
+            className="px-4 py-1 bg-win95-gray border-outset hover:bg-zinc-100 active:border-inset font-bold uppercase text-[10px]"
+          >
+            GO
+          </button>
+        </div>
+      )}
+
+      {/* 3. Screen Viewports */}
       <div className="flex-1 overflow-hidden relative bg-black flex flex-col">
-        {/* Wifi Interruption Guard */}
         {!isWifiConnected ? (
-          <div className="flex-1 flex flex-col items-center justify-center gap-4 text-red-500 p-6">
-            <WifiOff size={44} className="opacity-60 animate-pulse" />
-            <h2 className="text-md font-bold uppercase tracking-wider">Interface Link Failure</h2>
-            <p className="text-center text-[11px] text-zinc-500 max-w-sm">
-              Internet connectivity is inactive. Please connect using your System Wifi Manager to enable the proxy tunneling crawler.
+          
+          /* Wifi block display */
+          <div className="flex-1 bg-zinc-900 flex flex-col items-center justify-center gap-3 text-red-500 p-6">
+            <WifiOff size={40} className="opacity-50 animate-pulse text-red-500" />
+            <h2 className="text-xs font-bold uppercase tracking-wider text-white">Wifi Link Closed</h2>
+            <p className="text-center text-[11px] text-zinc-400 max-w-xs">
+              Explorer cannot query online proxies while the WiFi interface is disconnected.
             </p>
           </div>
-        ) : currentTab === 'search' ? (
-          // Search Tab View
-          <div className="flex-1 flex flex-col overflow-hidden">
+
+        ) : activeTab === 'explorer' ? (
+          
+          <div className="flex-1 flex flex-col overflow-hidden bg-white">
             {loading ? (
-              // Loading Spinner
-              <div className="flex-1 flex flex-col items-center justify-center gap-3">
-                <Terminal className="text-green-500 animate-spin" size={28} />
-                <p className="font-mono text-[10px] uppercase tracking-widest text-green-600">Retrieving index records...</p>
+              
+              /* Standard loading display */
+              <div className="flex-1 flex flex-col items-center justify-center gap-2 bg-[#fafafa]">
+                <div className="w-6 h-6 border-2 border-win95-blue border-t-transparent rounded-full animate-spin" />
+                <p className="font-mono text-[10px] uppercase tracking-wider text-zinc-500">Querying Virtual Index Nodes...</p>
               </div>
+
             ) : error ? (
-              // Error Banner
-              <div className="flex-1 flex items-center justify-center p-6">
-                <div className="border border-red-900/40 bg-red-950/20 p-4 max-w-md rounded text-center">
-                  <AlertCircle size={32} className="text-red-500 mx-auto mb-2" />
-                  <p className="font-mono text-red-400 font-bold text-[11px] uppercase">Engine Exception Detected</p>
-                  <p className="text-zinc-400 text-[10px] mt-1">{error}</p>
+              
+              /* Simple error card */
+              <div className="flex-1 flex items-center justify-center p-6 bg-[#fafafa]">
+                <div className="border-2 border-red-500 bg-red-50 p-4 max-w-sm text-center shadow-sm">
+                  <AlertCircle size={24} className="text-red-500 mx-auto mb-1" />
+                  <p className="font-bold text-red-600 text-[11px] uppercase">Connection Failed</p>
+                  <p className="text-zinc-600 text-[11px] mt-1.5 leading-relaxed">{error}</p>
                   <button 
                     onClick={() => setError(null)} 
-                    className="mt-4 px-3 py-1 bg-red-900/30 border border-red-500/30 text-red-400 hover:bg-red-500 hover:text-white text-[10px] font-mono rounded"
+                    className="mt-3 px-3 py-1 bg-white border border-red-300 text-red-600 text-[10px] font-bold rounded hover:bg-red-100"
                   >
                     DISMISS
                   </button>
                 </div>
               </div>
+
             ) : readerPage && activeUrl ? (
-              // Renders in custom "Reader Mode" (no iframe embedding!)
-              <div className="flex-1 flex flex-col overflow-hidden">
-                {/* Reader Meta Banner */}
-                <div className="bg-zinc-900/90 border-b border-green-900/30 px-4 py-2 flex items-center justify-between text-[10px] shrink-0">
-                  <div className="flex items-center gap-1 text-green-500 font-mono">
-                    <BookOpen size={12} />
-                    <span>READER MODE ACTIVATED — BARE-METAL PARSED VIEW</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-zinc-500">Indexed At: {new Date(readerPage.indexedAt).toLocaleDateString()}</span>
-                    <button 
-                      onClick={() => window.open(readerPage.url, '_blank')}
-                      className="hover:text-green-300 flex items-center gap-1 font-mono text-green-500 underline text-[9px]"
-                    >
-                      Web Original <ExternalLink size={10} />
-                    </button>
-                  </div>
+              
+              /* READER VIEW (Website display) */
+              <div className="flex-1 flex flex-col overflow-hidden bg-white select-text">
+                <div className="bg-zinc-100 border-b border-zinc-200 px-3 py-1 flex items-center justify-between text-[10px] text-zinc-500 shrink-0">
+                  <span className="font-bold text-zinc-700">VC_READER LAYER (PROXIED)</span>
+                  <button 
+                    onClick={() => window.open(activeUrl, '_blank')}
+                    className="text-blue-600 hover:underline flex items-center gap-1 font-bold text-[9px]"
+                  >
+                    Open original <ExternalLink size={9} />
+                  </button>
                 </div>
 
-                {/* Reader Text Body */}
-                <div className="flex-1 overflow-y-auto p-6 md:p-10 select-text selection:bg-green-700 selection:text-black">
-                  <div className="max-w-2xl mx-auto space-y-6">
-                    {/* Header */}
-                    <div className="border-b border-green-900/30 pb-4">
-                      <h1 className="text-2xl font-bold tracking-tight text-white mb-2 font-mono">{readerPage.title}</h1>
-                      <p className="text-green-600 font-mono text-[10px] break-all">{readerPage.url}</p>
+                <div className="flex-1 overflow-y-auto p-5 select-text selection:bg-blue-200">
+                  <div className="max-w-xl mx-auto space-y-4">
+                    <div className="border-b border-zinc-200 pb-2">
+                      <h1 className="text-xl font-bold text-zinc-900 leading-tight">{readerPage.title}</h1>
+                      <p className="text-green-700 text-[10px] truncate break-all font-mono select-all">{readerPage.url}</p>
                     </div>
 
-                    {/* Paragraphs */}
-                    <div className="space-y-4 text-zinc-300 leading-relaxed text-[12.5px] font-mono">
-                      {readerPage.paragraphs.map((para, idx) => (
-                        <p key={idx} className="whitespace-pre-wrap">{para}</p>
+                    <div className="space-y-3.5 text-zinc-800 leading-relaxed text-[12px] font-sans">
+                      {readerPage.paragraphs.map((line, idx) => (
+                        <p key={idx}>{line}</p>
                       ))}
                     </div>
 
-                    {/* Extracted Outlinks */}
                     {readerPage.links && readerPage.links.length > 0 && (
-                      <div className="mt-10 border-t border-green-900/30 pt-6">
-                        <p className="text-[10px] font-bold text-green-500 uppercase tracking-widest mb-4 font-mono">Mapped Hypertext References:</p>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="mt-8 border-t border-zinc-200 pt-4">
+                        <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-2">Registered Hypertexts:</p>
+                        <div className="grid grid-cols-1 gap-2">
                           {readerPage.links.map((link, idx) => (
                             <button
                               key={idx}
-                              onClick={() => openUrlInReader(link.href)}
-                              className="text-left p-2.5 rounded bg-zinc-900/30 border border-zinc-900 hover:border-green-800/30 hover:bg-green-950/10 group flex items-start gap-2"
+                              onClick={() => loadWebAddress(link.href)}
+                              className="text-left p-2 border border-zinc-100 hover:border-blue-200 rounded hover:bg-blue-50/40 text-[11px] flex flex-col"
                             >
-                              <Globe size={11} className="text-green-600 mt-1 shrink-0" />
-                              <div className="min-w-0">
-                                <div className="text-blue-400 group-hover:underline text-[11px] truncate">{link.text}</div>
-                                <div className="text-[9px] text-zinc-500 truncate font-mono">{link.href}</div>
-                              </div>
+                              <span className="text-blue-600 font-bold hover:underline truncate">{link.text}</span>
+                              <span className="text-[9px] text-zinc-400 truncate font-mono">{link.href}</span>
                             </button>
                           ))}
                         </div>
@@ -711,195 +777,259 @@ export const SearchEngine: React.FC = () => {
                   </div>
                 </div>
               </div>
-            ) : results.length > 0 ? (
-              // Search Results List
-              <div className="flex-1 overflow-y-auto p-4 select-text">
-                <div className="max-w-2xl mx-auto space-y-5">
-                  <div className="border-b border-green-900/20 pb-2 flex items-center justify-between text-[10px]">
-                    <p className="text-green-600 font-mono">Found {results.length} documents matching search index filter.</p>
-                    <p className="text-zinc-500 uppercase">Engine: VC.BM_v2</p>
-                  </div>
 
-                  <div className="space-y-6">
-                    {results.map((res, i) => (
-                      <div key={i} className="group border border-transparent hover:border-green-900/20 hover:bg-green-950/5 p-2 rounded transition-colors">
+            ) : results.length > 0 ? (
+              
+              /* SEARCH RESULTS PANEL */
+              <div className="flex-1 overflow-y-auto p-4 select-text bg-zinc-50">
+                <div className="max-w-2xl mx-auto space-y-4">
+                  
+                  {/* Instant Fact / Summary Card */}
+                  {instantAnswer && (
+                    <div className="bg-white border-l-4 border-win95-blue p-4 shadow-xs border border-zinc-200 rounded flex gap-4 items-start">
+                      {instantAnswer.image && (
+                        <img 
+                          src={instantAnswer.image} 
+                          alt="preview" 
+                          referrerPolicy="no-referrer"
+                          className="w-12 h-12 rounded object-cover border border-zinc-200 shrink-0 bg-zinc-50" 
+                        />
+                      )}
+                      <div className="flex-1 space-y-1">
+                        <span className="bg-win95-blue text-white text-[9px] font-bold px-1.5 py-0.5 rounded-sm uppercase tracking-wider">Fast Facts</span>
+                        <h2 className="text-base font-bold text-zinc-950 leading-tight">{instantAnswer.heading}</h2>
+                        <p className="text-zinc-600 text-[12px] leading-relaxed">{instantAnswer.abstractText}</p>
+                        {instantAnswer.abstractURL && (
+                          <button 
+                            onClick={() => loadWebAddress(instantAnswer.abstractURL)}
+                            className="mt-1 text-[11px] text-blue-600 hover:underline font-bold flex items-center gap-1"
+                          >
+                            Read Reference Citation <ExternalLink size={10} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Organic Results List */}
+                  <div className="space-y-3">
+                    {results.map((res, index) => (
+                      <div key={index} className="bg-white border border-zinc-200 p-3.5 shadow-xs hover:border-zinc-300 rounded transition-all">
                         <button 
-                          onClick={() => openUrlInReader(res.link)}
-                          className="text-blue-400 hover:underline hover:text-blue-300 text-base font-bold text-left block w-full mb-1"
+                          onClick={() => loadWebAddress(res.link)}
+                          className="text-left text-blue-700 hover:underline font-bold text-[13px] block truncate w-full"
                         >
                           {res.title}
                         </button>
-                        <p className="text-green-600 font-mono text-[10px] truncate mb-1">{res.link}</p>
-                        <p className="text-zinc-400 text-[11.5px] leading-relaxed font-mono">{res.snippet}</p>
-                        <div className="flex items-center gap-2 mt-2">
-                          <span className="text-[9px] bg-green-950/40 text-green-500 px-1.5 py-0.5 rounded font-mono border border-green-900/30">
-                            SCORE: {res.score} pt
-                          </span>
-                        </div>
+                        <span className="text-green-700 text-[10px] block font-mono truncate mb-1 select-all">{res.link}</span>
+                        <p className="text-zinc-600 text-[11.5px] leading-relaxed">{res.snippet}</p>
                       </div>
                     ))}
                   </div>
                 </div>
               </div>
+
             ) : (
-              // Search Engine Homepage
-              <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
-                <div className="w-16 h-16 bg-green-950/20 border border-green-500/20 rounded-full flex items-center justify-center mb-4">
-                  <Globe size={32} className="text-green-500 opacity-60" />
-                </div>
-                <div className="max-w-sm space-y-2">
-                  <h2 className="text-lg font-bold text-white uppercase tracking-wider font-mono">VC EXPLORER</h2>
-                  <p className="text-zinc-500 text-[11px] leading-relaxed">
-                    A fully custom bare-metal text search indexer. Crawl real sites, build a persistent local database, and query everything offline. No external scrapers or trackers.
+              
+              /* EXPANSION PORTAL HOMEPAGE (Search Landing Page) */
+              <div className="flex-1 flex flex-col justify-between p-6 bg-zinc-100 select-none overflow-y-auto">
+                <div className="max-w-md mx-auto w-full my-auto space-y-6 text-center">
+                  
+                  {/* Styled Logo Title using tracked uppercase Display Font */}
+                  <div className="space-y-1">
+                    <h1 className="text-3xl font-black uppercase tracking-widest text-zinc-950 flex items-center justify-center gap-2">
+                      <Globe size={28} className="text-win95-blue" />
+                      VC.explorer
+                    </h1>
+                    <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Virtual Index Node Search Utility</p>
+                  </div>
+
+                  {/* Centered Search box */}
+                  <div className="relative">
+                    <div className="flex items-center bg-white border-inset p-1 shadow-sm rounded-sm">
+                      <input 
+                        type="text" 
+                        className="w-full bg-transparent text-black outline-none font-mono text-[12px] px-2"
+                        placeholder="Search system nodes, definition tables or URLs..."
+                        value={queryInput}
+                        onFocus={() => {
+                          if (queryInput.trim().length >= 2) setShowSuggestions(true);
+                        }}
+                        onChange={(e) => {
+                          setQueryInput(e.target.value);
+                          setShowSuggestions(true);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            triggerSearch();
+                          }
+                        }}
+                      />
+                      <button 
+                        onClick={() => triggerSearch()}
+                        className="px-4 py-1.5 bg-win95-gray border-outset hover:bg-zinc-100 active:border-inset font-bold uppercase text-[10.5px]"
+                      >
+                        SEARCH
+                      </button>
+                    </div>
+
+                    {/* Suggestions list dropdown overlay */}
+                    {showSuggestions && suggestions.length > 0 && (
+                      <div 
+                        ref={suggestionRef}
+                        className="absolute left-0 right-0 top-[38px] bg-white border border-zinc-400 shadow-md z-50 text-left rounded-b-sm select-none text-[11px]"
+                      >
+                        {suggestions.map((phrase, idx) => (
+                          <div
+                            key={idx}
+                            onClick={() => {
+                              setQueryInput(phrase);
+                              setShowSuggestions(false);
+                              triggerSearch(undefined, phrase);
+                            }}
+                            className="px-3 py-1.5 hover:bg-win95-blue hover:text-white cursor-pointer flex items-center gap-2 border-b border-zinc-100 last:border-b-0"
+                          >
+                            <Search size={10} className="text-zinc-400 shrink-0" />
+                            <span>{phrase}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-wide">
+                    Private virtual proxies active — No tracking logs retained
                   </p>
-                </div>
 
-                <div className="mt-6 flex flex-wrap justify-center gap-2 max-w-md">
-                  <button 
-                    onClick={() => { setQuery('vcos://welcome'); openUrlInReader('vcos://welcome'); }}
-                    className="px-2.5 py-1 bg-zinc-900 border border-green-900/40 text-green-500 hover:bg-green-600 hover:text-black font-mono text-[10px] rounded"
-                  >
-                    vcos://welcome
-                  </button>
-                  <button 
-                    onClick={() => { setQuery('operating system'); handleSearch(undefined, 'operating system'); }}
-                    className="px-2.5 py-1 bg-zinc-900 border border-green-900/40 text-green-500 hover:bg-green-600 hover:text-black font-mono text-[10px] rounded"
-                  >
-                    "operating system"
-                  </button>
-                  <button 
-                    onClick={() => { setQuery('kernel'); handleSearch(undefined, 'kernel'); }}
-                    className="px-2.5 py-1 bg-zinc-900 border border-green-900/40 text-green-500 hover:bg-green-600 hover:text-black font-mono text-[10px] rounded"
-                  >
-                    "kernel"
-                  </button>
-                </div>
-
-                {history.length > 0 && (
-                  <div className="mt-8 text-left w-full max-w-xs border-t border-green-900/20 pt-4">
-                    <p className="font-bold text-[9px] uppercase text-zinc-500 tracking-widest mb-2 font-mono">Recent Queries</p>
-                    <div className="flex flex-wrap gap-2">
-                      {history.map((h, i) => (
-                        <button 
-                          key={i} 
-                          className="px-2 py-0.5 bg-zinc-900/60 border border-zinc-850 hover:border-green-900/50 hover:bg-zinc-800 text-[10px] font-mono text-zinc-400 rounded"
-                          onClick={() => {
-                            setQuery(h);
-                            handleSearch(undefined, h);
-                          }}
-                        >
-                          {h}
-                        </button>
-                      ))}
+                  {/* Pre-seeded system bookmark blocks (Speed dial) */}
+                  <div className="pt-2">
+                    <p className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider mb-2.5">System Bookmark Indexes</p>
+                    <div className="grid grid-cols-2 gap-2 max-w-sm mx-auto">
+                      <button 
+                        onClick={() => loadWebAddress('vcos://welcome')}
+                        className="p-2 border border-zinc-200 bg-white hover:bg-zinc-50 text-left rounded shadow-2xs flex items-center gap-2"
+                      >
+                        <Layers size={14} className="text-win95-blue" />
+                        <div className="truncate">
+                          <div className="font-bold text-[10px] text-zinc-800">Welcome Portal</div>
+                          <div className="text-[8px] text-zinc-400 font-mono truncate">vcos://welcome</div>
+                        </div>
+                      </button>
+                      <button 
+                        onClick={() => loadWebAddress('vcos://kernel')}
+                        className="p-2 border border-zinc-200 bg-white hover:bg-zinc-50 text-left rounded shadow-2xs flex items-center gap-2"
+                      >
+                        <Shield size={14} className="text-green-600" />
+                        <div className="truncate">
+                          <div className="font-bold text-[10px] text-zinc-800">Kernel Spec</div>
+                          <div className="text-[8px] text-zinc-400 font-mono truncate">vcos://kernel</div>
+                        </div>
+                      </button>
+                      <button 
+                        onClick={() => loadWebAddress('https://en.wikipedia.org/wiki/Operating_system')}
+                        className="p-2 border border-zinc-200 bg-white hover:bg-zinc-50 text-left rounded shadow-2xs flex items-center gap-2"
+                      >
+                        <Globe size={14} className="text-blue-500" />
+                        <div className="truncate">
+                          <div className="font-bold text-[10px] text-zinc-800">Wikipedia</div>
+                          <div className="text-[8px] text-zinc-400 font-mono truncate">wikipedia.org</div>
+                        </div>
+                      </button>
+                      <button 
+                        onClick={() => loadWebAddress('https://news.ycombinator.com')}
+                        className="p-2 border border-zinc-200 bg-white hover:bg-zinc-50 text-left rounded shadow-2xs flex items-center gap-2"
+                      >
+                        <ExternalLink size={14} className="text-orange-500" />
+                        <div className="truncate">
+                          <div className="font-bold text-[10px] text-zinc-800">Hacker News</div>
+                          <div className="text-[8px] text-zinc-400 font-mono truncate">ycombinator.com</div>
+                        </div>
+                      </button>
                     </div>
                   </div>
-                )}
-              </div>
-            )}
-          </div>
-        ) : (
-          // Crawler Core tab
-          <div className="flex-1 flex flex-col md:flex-row overflow-hidden divide-y md:divide-y-0 md:divide-x divide-green-900/20 font-mono text-[11px]">
-            {/* Left Column: Index Control & Web Crawler Input */}
-            <div className="w-full md:w-1/2 p-4 flex flex-col gap-4 overflow-y-auto">
-              <div>
-                <h3 className="font-bold text-white uppercase text-[12px] flex items-center gap-1.5 mb-1.5 text-green-500">
-                  <Terminal size={14} /> Web Crawling Console
-                </h3>
-                <p className="text-zinc-500 text-[10px] leading-relaxed">
-                  Enter any public HTTP/HTTPS URL or custom system path. The VC crawler engine will dynamically fetch the payload, strip structural formatting, compile index tokens, and push to persistent local storage.
-                </p>
+
+                </div>
+
+                {/* Footer status blocks */}
+                <div className="border-t border-zinc-200 pt-3 flex items-center justify-between text-[9.5px] text-zinc-400 uppercase font-bold select-none">
+                  <span>Network: Handshake Connected</span>
+                  <span>Port: 3000 (HTTP Tunneling)</span>
+                  <span>Zone: Secure_Sandbox</span>
+                </div>
               </div>
 
-              {/* Crawler Form */}
-              <form onSubmit={handleManualCrawl} className="flex gap-1.5 shrink-0">
+            )}
+          </div>
+
+        ) : (
+          
+          /* CRAWLER TAB (Terminal interface to scrape indexing parameters) */
+          <div className="flex-1 flex flex-col overflow-hidden bg-zinc-900 select-text">
+            {/* Scraper panel header */}
+            <div className="p-3 bg-zinc-800 border-b border-zinc-700 flex flex-col md:flex-row gap-3 items-center justify-between shrink-0 select-none">
+              <div className="flex items-center gap-2">
+                <Database size={16} className="text-green-500" />
+                <span className="font-bold text-white text-[11px] uppercase tracking-wide">Manual Scraping Tunnel Console</span>
+              </div>
+              <form onSubmit={handleManualCrawl} className="flex gap-2 w-full md:w-auto">
                 <input 
                   type="text" 
-                  className="flex-1 bg-black border border-green-900/50 outline-none p-1.5 font-mono text-green-400 placeholder-green-900 text-[10.5px] rounded"
                   value={crawlUrl}
                   onChange={(e) => setCrawlUrl(e.target.value)}
-                  placeholder="E.g., https://en.wikipedia.org/wiki/Web_crawler"
+                  placeholder="https://example.com" 
+                  className="bg-black border border-zinc-600 text-green-400 text-[11px] px-2 py-1 outline-none font-mono flex-1 md:w-64 rounded-sm"
                   disabled={isCrawling}
                 />
                 <button 
                   type="submit"
-                  className="px-4 bg-green-600 text-black font-bold uppercase hover:bg-green-500 active:bg-green-700 disabled:opacity-50 text-[10px] rounded shrink-0 flex items-center gap-1"
                   disabled={isCrawling || !crawlUrl.trim()}
+                  className="bg-green-600 hover:bg-green-500 text-white font-bold px-3 py-1 text-[10px] uppercase rounded-sm disabled:opacity-40"
                 >
-                  {isCrawling ? 'Crawling...' : 'Index'}
+                  {isCrawling ? 'SCALING...' : 'INDEX'}
                 </button>
               </form>
+            </div>
 
-              {/* Logs Terminal */}
-              <div className="flex-1 min-h-[140px] bg-black border border-green-900/40 p-3 flex flex-col rounded">
-                <div className="border-b border-green-900/30 pb-1 mb-2 flex items-center justify-between text-[9px] text-zinc-500">
-                  <span>Engine Logs</span>
-                  <span className="animate-pulse text-green-600">{isCrawling ? '● CRAWL_EXECUTION' : '● IDLE'}</span>
-                </div>
-                <div className="flex-1 overflow-y-auto font-mono text-[10px] text-green-500/80 space-y-1 select-text">
-                  {crawlLogs.length === 0 ? (
-                    <span className="text-zinc-600 italic">No logs on stack. Initiate crawls to view stream...</span>
-                  ) : (
-                    crawlLogs.map((log, i) => (
-                      <div key={i} className="whitespace-pre-wrap leading-tight">{log}</div>
-                    ))
-                  )}
+            {/* Main crawl interface splitting indexing list and terminal logs */}
+            <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+              {/* Terminal Logs view */}
+              <div className="flex-1 bg-black p-4 font-mono text-[11px] text-green-400 overflow-y-auto border-b md:border-b-0 md:border-r border-zinc-800 flex flex-col">
+                <p className="text-zinc-500 select-none">// VC_EXPLORER CRAWLER PROTOCOL v1.0.0</p>
+                <p className="text-zinc-500 select-none">// Ready to intercept network handshakes...</p>
+                
+                <div className="flex-1 space-y-1 mt-2">
+                  {crawlLogs.map((log, i) => (
+                    <div key={i} className="whitespace-pre-wrap">{log}</div>
+                  ))}
                   <div ref={logTerminalEndRef} />
                 </div>
               </div>
 
-              {/* Reset Control */}
-              <div className="border-t border-green-900/20 pt-3 flex items-center justify-between">
-                <span className="text-[10px] text-zinc-500">Total size: {dbPages.length} index pages</span>
-                <button 
-                  onClick={resetIndexToDefaults}
-                  className="px-2.5 py-1 bg-red-950/20 border border-red-900/30 text-red-400 hover:bg-red-500 hover:text-white text-[10px] rounded uppercase font-bold"
-                >
-                  Reset Database
-                </button>
-              </div>
-            </div>
-
-            {/* Right Column: Database Records list */}
-            <div className="w-full md:w-1/2 p-4 flex flex-col overflow-hidden">
-              <h3 className="font-bold text-white uppercase text-[12px] flex items-center gap-1.5 mb-2 text-green-500">
-                <Database size={14} /> Local Index Registry
-              </h3>
-              
-              <div className="flex-1 border border-green-900/40 bg-black/40 overflow-y-auto rounded divide-y divide-green-900/20">
-                {dbPages.map((page) => (
-                  <div key={page.url} className="p-2.5 flex items-start gap-2 hover:bg-zinc-950 transition-colors">
-                    <FileText size={14} className="text-green-600 mt-1 shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <div className="font-bold text-white text-[11px] truncate">{page.title}</div>
-                      <div className="text-[10px] text-green-600 truncate break-all">{page.url}</div>
-                      <div className="text-[9px] text-zinc-500 mt-0.5">Scraped paragraphs: {page.paragraphs?.length || 0} | Links: {page.links?.length || 0}</div>
+              {/* Indexed database view */}
+              <div className="w-full md:w-72 bg-zinc-950 p-3 overflow-y-auto text-zinc-300 select-none flex flex-col">
+                <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider mb-2 shrink-0">Registered Search Indices ({dbPages.length})</span>
+                <div className="flex-1 space-y-2 overflow-y-auto min-h-0">
+                  {dbPages.map((page, i) => (
+                    <div key={i} className="p-2.5 bg-zinc-900 border border-zinc-800 rounded-sm flex items-start gap-2 justify-between">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[11px] font-bold text-white truncate">{page.title}</div>
+                        <div className="text-[9px] text-zinc-500 font-mono truncate">{page.url}</div>
+                      </div>
+                      <button 
+                        onClick={() => handleDeleteIndex(page.url)}
+                        className="text-red-500 hover:text-red-400 p-1 hover:bg-zinc-800 rounded shrink-0"
+                        title="Delete record"
+                      >
+                        <Trash2 size={12} />
+                      </button>
                     </div>
-                    <button 
-                      onClick={() => deleteFromIndex(page.url)}
-                      className="p-1 text-red-500/50 hover:text-red-400 hover:bg-red-950/20 rounded"
-                      title="Delete from index"
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             </div>
           </div>
-        )}
-      </div>
 
-      {/* Footer Info & Connection Diagnostics */}
-      <div className="bg-[#141414] border-t border-green-900/30 px-3 py-1 flex items-center justify-between text-[10px] text-green-700 font-mono shrink-0">
-        <div className="flex items-center gap-1.5">
-          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-          <span>INDEX ACTIVE — {dbPages.length} WEBPAGES CACHED</span>
-        </div>
-        <div className="flex items-center gap-4">
-          <span>PORT: 3000 (LOCAL)</span>
-          <span>ZONE: SANDBOXED_OS</span>
-        </div>
+        )}
       </div>
     </div>
   );

@@ -235,8 +235,9 @@ export const VCLinux: React.FC<{
             addToHistory(`                                 Dload  Upload   Total   Spent    Left  Speed`, 'dim');
             
             try {
-              // Try multiple proxies if one fails
+              // Try multiple proxies if one fails (trying our native system HTTPS tunnel first)
               const proxies = [
+                `/api/proxy?url=${encodeURIComponent(url)}`,
                 `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
                 `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`
               ];
@@ -321,7 +322,9 @@ export const VCLinux: React.FC<{
                   addToHistory('Blender has been successfully installed to the system.', 'success');
                 }
               } else {
+                // Try multiple proxies if one fails (trying our native system HTTPS tunnel first)
                 const proxies = [
+                  `/api/proxy?url=${encodeURIComponent(url)}`,
                   `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
                   `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`
                 ];

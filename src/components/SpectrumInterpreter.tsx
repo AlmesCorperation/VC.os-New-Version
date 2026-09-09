@@ -70,7 +70,11 @@ const SpectrumCanvas: React.FC<InterpreterProps> = ({ script, isPaused, gameId, 
         socketRef.current = socket;
 
         socket.onopen = () => {
-          socket.send(JSON.stringify({ type: 'join', gameId }));
+          if (socket.readyState === WebSocket.OPEN) {
+            try {
+              socket.send(JSON.stringify({ type: 'join', gameId }));
+            } catch (err) {}
+          }
         };
 
         socket.onmessage = (event) => {
@@ -82,8 +86,16 @@ const SpectrumCanvas: React.FC<InterpreterProps> = ({ script, isPaused, gameId, 
           } catch (e) {}
         };
 
+        socket.onerror = () => {
+          // Gracefully suppress all WebSocket errors to prevent browser alerts/bubbles
+        };
+
         return () => {
-          socket.close();
+          if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+            try {
+              socket.close();
+            } catch (err) {}
+          }
         };
       } catch (e) {}
     }

@@ -205,13 +205,96 @@ Return ONLY valid HTML.`
   });
 
   app.get("/api/search", async (req, res) => {
-    const query = req.query.q;
+    const query = req.query.q as string;
     const apiKey = process.env.SERPER_API_KEY;
 
     if (!query) {
       return res.status(400).json({ error: "Query parameter 'q' is required" });
     }
 
+    try {
+      // 1. Query DuckDuckGo Instant Answer API
+      const ddgUrl = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
+      const ddgResponse = await fetch(ddgUrl, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+      });
+      
+      if (ddgResponse.ok) {
+        const ddgData = await ddgResponse.json();
+        
+        const abstractText = ddgData.AbstractText || ddgData.Abstract || "";
+        const abstractSource = ddgData.AbstractSource || "";
+        const abstractURL = ddgData.AbstractURL || "";
+        const heading = ddgData.Heading || "";
+        const image = ddgData.Image || "";
+        
+        // Parse RelatedTopics into search result list items
+        const items: any[] = [];
+        if (ddgData.RelatedTopics && Array.isArray(ddgData.RelatedTopics)) {
+          ddgData.RelatedTopics.forEach((topic: any) => {
+            // Some entries are nested categories (e.g. Topics)
+            if (topic.Topics && Array.isArray(topic.Topics)) {
+              topic.Topics.forEach((subTopic: any) => {
+                if (subTopic.FirstURL && subTopic.Text) {
+                  const parts = subTopic.Text.split(" - ");
+                  const title = parts[0] || subTopic.Text;
+                  const snippet = parts.slice(1).join(" - ") || subTopic.Text;
+                  items.push({
+                    title: title.trim(),
+                    link: subTopic.FirstURL,
+                    snippet: snippet.trim()
+                  });
+                }
+              });
+            } else if (topic.FirstURL && topic.Text) {
+              const parts = topic.Text.split(" - ");
+              const title = parts[0] || topic.Text;
+              const snippet = parts.slice(1).join(" - ") || topic.Text;
+              items.push({
+                title: title.trim(),
+                link: topic.FirstURL,
+                snippet: snippet.trim()
+              });
+            }
+          });
+        }
+
+        // Parse official results
+        if (ddgData.Results && Array.isArray(ddgData.Results)) {
+          ddgData.Results.forEach((result: any) => {
+            if (result.FirstURL && result.Text) {
+              const parts = result.Text.split(" - ");
+              const title = parts[0] || result.Text;
+              const snippet = parts.slice(1).join(" - ") || result.Text;
+              items.push({
+                title: title.trim(),
+                link: result.FirstURL,
+                snippet: snippet.trim()
+              });
+            }
+          });
+        }
+
+        // If we found a direct abstract or some related items, return them immediately
+        if (abstractText || items.length > 0) {
+          return res.json({
+            provider: "duckduckgo",
+            heading,
+            abstractText,
+            abstractSource,
+            abstractURL,
+            image,
+            items: items.slice(0, 15)
+          });
+        }
+      }
+    } catch (ddgErr) {
+      console.error("DuckDuckGo API Error:", ddgErr);
+    }
+
+    // 2. Fallback to Google Serper if key exists
     if (apiKey) {
       try {
         const response = await fetch("https://google.serper.dev/search", {
@@ -230,13 +313,16 @@ Return ONLY valid HTML.`
           snippet: item.snippet
         }));
 
-        return res.json({ items: results });
+        return res.json({
+          provider: "serper",
+          items: results
+        });
       } catch (error) {
         console.error("Serper API Error:", error);
       }
     }
 
-    // Fallback to Gemini AI if Serper API fails or is not configured
+    // 3. Fallback to Gemini AI to generate high quality search results matching DDG theme
     try {
       if (!process.env.GEMINI_API_KEY) {
         return res.status(500).json({ error: "No search keys configured (SERPER_API_KEY or GEMINI_API_KEY)" });
@@ -245,11 +331,18 @@ Return ONLY valid HTML.`
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
       const response = await ai.models.generateContent({
         model: 'gemini-3.1-flash',
-        contents: `You are simulating a web search engine API. 
+        contents: `You are simulating a web search engine API powered by DuckDuckGo. 
 The user searched for: "${query}"
 
-Generate 5-10 realistic search results for this query. Return ONLY a valid JSON object with the following schema:
+Generate 5-10 realistic, accurate, and helpful search results for this query. Let's make sure the links are real domains like wikipedia.org, github.com, reddit.com, stackoverflow.com, etc.
+Also generate an instant answer if applicable (e.g. definition, fast facts, capital, history).
+
+Return ONLY a valid JSON object with the following schema:
 {
+  "heading": "Summary Topic Heading (or null)",
+  "abstractText": "Concise summary/instant answer for the query (or null)",
+  "abstractSource": "Wikipedia",
+  "abstractURL": "https://en.wikipedia.org/wiki/...",
   "items": [
     {
       "title": "Page Title",
@@ -265,10 +358,43 @@ Generate 5-10 realistic search results for this query. Return ONLY a valid JSON 
 
       const text = response.text;
       const data = JSON.parse(text || "{}");
-      res.json({ items: data.items || [] });
+      res.json({
+        provider: "gemini_ddg_sim",
+        heading: data.heading || "",
+        abstractText: data.abstractText || "",
+        abstractSource: data.abstractSource || "Wikipedia",
+        abstractURL: data.abstractURL || "",
+        items: data.items || []
+      });
     } catch (error) {
       console.error("Gemini Search Generation Error:", error);
       res.status(500).json({ error: "Failed to fetch search results" });
+    }
+  });
+
+  app.get("/api/search/suggest", async (req, res) => {
+    const query = req.query.q as string;
+    if (!query) {
+      return res.json([]);
+    }
+
+    try {
+      const suggestUrl = `https://ac.duckduckgo.com/ac/?q=${encodeURIComponent(query)}&type=json`;
+      const response = await fetch(suggestUrl, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        // ac.duckduckgo.com returns array of objects: [ { phrase: "suggestion" }, ... ]
+        const suggestions = data.map((item: any) => item.phrase);
+        return res.json(suggestions);
+      }
+      res.json([]);
+    } catch (err) {
+      console.error("DDG Autocomplete error:", err);
+      res.json([]);
     }
   });
 

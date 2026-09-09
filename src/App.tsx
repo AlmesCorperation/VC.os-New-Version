@@ -47,6 +47,7 @@ import { kernel, CPURing } from './services/kernel';
 import { TaskManager } from './components/TaskManager';
 import { TimerApp } from './components/TimerApp';
 import { AlarmClockApp } from './components/AlarmClockApp';
+import { CalculatorApp } from './components/CalculatorApp';
 import { MemoryBitmap } from './components/MemoryBitmap';
 import { InterruptMonitor } from './components/InterruptMonitor';
 import { VMController } from './components/VMController';
@@ -55,7 +56,7 @@ import { db, auth, onAuthStateChanged, collection, query, orderBy, onSnapshot, O
 import { vfs } from './services/vfs';
 import { libarchive } from './services/libarchive';
 import { memoryManager } from './services/memoryManager';
-import { Terminal as TerminalIcon, Maximize2, Minus, X, AlertTriangle, Cpu, HardDrive, Activity, Edit3, Shield, Gamepad2, ShoppingBag, Code2, Monitor, Folder, Settings, Search, HelpCircle, Power, ChevronRight, Save, Globe, FileText, Download, History, Bug, Cloud, Timer as TimerIcon, AlarmClock as AlarmIcon, List, Disc, Wifi, WifiOff } from 'lucide-react';
+import { Terminal as TerminalIcon, Maximize2, Minus, X, AlertTriangle, Cpu, HardDrive, Activity, Edit3, Shield, Gamepad2, ShoppingBag, Code2, Monitor, Folder, Settings, Search, HelpCircle, Power, ChevronRight, Save, Globe, FileText, Download, History, Bug, Cloud, Timer as TimerIcon, AlarmClock as AlarmIcon, List, Disc, Wifi, WifiOff, Calculator } from 'lucide-react';
 import { useScreenSize, ScreenSize } from './hooks/useScreenSize';
 
 
@@ -960,6 +961,7 @@ START:
     help: 'Help Topics',
     docs: 'C:\\Documents',
     fileman: 'MS-DOS Executive',
+    calc: 'Calculator',
     linux: 'VC.linux (Unified)',
     maze3d: '3D Maze (Screensaver)',
     mystify: 'Mystify (Screensaver)',
@@ -1012,6 +1014,13 @@ START:
       color: PALETTE.red,
       icon: <AlarmIcon size={14} />,
       content: <AlarmClockApp />
+    },
+    {
+      id: 'calc',
+      title: 'Calculator',
+      color: PALETTE.blue,
+      icon: <Calculator size={14} />,
+      content: <CalculatorApp />
     },
     {
       id: 'isomaster',
@@ -1424,6 +1433,11 @@ START:
             onClick={() => toggleWindow('alarm')} 
           />
           <DesktopIcon 
+            icon={<Calculator className="text-blue-400" size={28} />} 
+            label="Calculator" 
+            onClick={() => toggleWindow('calc')} 
+          />
+          <DesktopIcon 
             icon={<Disc className="text-win95-white" size={28} />} 
             label="ISO Master" 
             onClick={() => toggleWindow('isomaster')} 
@@ -1696,6 +1710,7 @@ START:
                   <StartMenuItem icon={<Activity size={16} className="text-blue-500" />} label="Task Manager" onClick={() => toggleWindow('taskman')} />
                   <StartMenuItem icon={<TimerIcon size={16} />} label="Timer" onClick={() => toggleWindow('timer')} />
                   <StartMenuItem icon={<AlarmIcon size={16} className="text-red-500" />} label="Alarm Clock" onClick={() => toggleWindow('alarm')} />
+                  <StartMenuItem icon={<Calculator size={16} className="text-blue-500" />} label="Calculator" onClick={() => toggleWindow('calc')} />
                   <StartMenuItem icon={<Disc size={16} />} label="ISO Master" onClick={() => toggleWindow('isomaster')} />
                   <StartMenuItem icon={<HardDrive size={16} className="text-green-500" />} label="Memory Map" onClick={() => toggleWindow('memmap')} />
                   <StartMenuItem icon={<Shield size={16} className="text-blue-500" />} label="IDT Monitor" onClick={() => toggleWindow('idt')} />
